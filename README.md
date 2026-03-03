@@ -91,10 +91,10 @@ $$\mathcal{L}_{VAE} = \mathcal{L}_{rec} + \beta \cdot D_{KL}(q(z|x) \| p(z))$$
 ## Plan realizacji
 
 ### Tydzień 1 — Dane i baseline
-- [ ] Pobranie i eksploracja datasetu CIC-MalMem-2022
-- [ ] Preprocessing: normalizacja Min-Max, obsługa brakujących wartości
-- [ ] Implementacja baseline: prosta sieć FC (odtworzenie klasyfikacji z artykułu)
-- [ ] Wyznaczenie metryk baseline do porównania
+- [x] Pobranie i eksploracja datasetu CIC-MalMem-2022
+- [x] Preprocessing: normalizacja Min-Max, obsługa brakujących wartości
+- [x] Implementacja baseline: prosta sieć FC (75.3% acc, `02_baseline.ipynb`)
+- [x] Wyznaczenie metryk baseline do porównania (`results/metrics/baseline_results.json`)
 
 ### Tydzień 2 — AE Anomaly Detection
 - [ ] Implementacja podstawowego Autoencodera (FC)
