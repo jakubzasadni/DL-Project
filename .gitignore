@@ -1,0 +1,26 @@
+# Data — nie commituj surowych/przetworzonych danych (>100MB)
+data/raw/
+data/processed/
+
+# Zapisane wagi modeli
+results/models/*.pt
+results/models/*.pth
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.env
+.venv/
+venv/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE
+.vscode/settings.json
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
