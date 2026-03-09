@@ -7,17 +7,17 @@
 **Pobierz dataset stąd:**  
 https://www.kaggle.com/datasets/dhoogla/cicmalmem2022
 
-**Po pobraniu wklej pliki CSV tutaj:**
+**Po pobraniu wklej plik tutaj:**
 
 ```
 DL-Project/
 └── data/
     └── raw/         ← TU wklejasz plik
-        ├── Obfuscated-MalMem2022.parquet
-        └── ...
+        └── Obfuscated-MalMem2022.parquet
 ```
 
-Kod sam je znajdzie — szuka pliku w folderze `data/raw/`.  
+Format to **Parquet** (nie CSV) — to skompresowany format kolumnowy, dużo szybszy niż CSV.  
+Kod sam go znajdzie — `load_raw_data()` rekurencyjnie szuka plików `.parquet` i `.csv` w folderze `data/raw/`.  
 Folder `data/processed/` zostanie wypełniony automatycznie przez kod.
 
 **Ważne:** `data/raw/` jest w `.gitignore` — pliki NIE trafią do GitHuba (za duże).
@@ -102,7 +102,7 @@ AEConfig.learning_rate   # jak szybko model się uczy (za duże = niestabilny, z
 ---
 
 ### `src/data/loader.py` — Ładowanie danych
-**Co robi:** Wczytuje CSV, zamienia etykiety tekstowe na liczby, normalizuje dane, dzieli na train/val/test, pakuje do DataLoaderów.  
+**Co robi:** Wczytuje plik Parquet (lub CSV), wyciąga etykiety z kolumn `Category` i `Class`, normalizuje dane, dzieli na train/val/test, pakuje do DataLoaderów.  
 **Kiedy używać:** Na początku każdego notebooka/skryptu.  
 **Kluczowe pojęcia:**
 
@@ -118,10 +118,22 @@ AEConfig.learning_rate   # jak szybko model się uczy (za duże = niestabilny, z
 # Typowe użycie:
 from src.data.loader import load_raw_data, preprocess, make_dataloaders
 
-df = load_raw_data()                          # wczytaj CSV z data/raw/
-X, y = preprocess(df)                         # normalizacja, mapowanie etykiet
+df = load_raw_data("data/raw")                 # wczytaj .parquet z data/raw/
+X, y = preprocess(df, mode="multiclass")       # normalizacja, mapowanie etykiet
 train_loader, val_loader, test_loader = make_dataloaders(X, y, anomaly_mode=True)
 ```
+
+**Struktura datasetu (kolumny w pliku):**
+
+| Kolumna | Co zawiera |
+|---------|------------|
+| `Category` | `"Benign"` albo pełna nazwa jak `"Ransomware-Ako-abc123-1.raw"` |
+| `Class` | `"Benign"` lub `"Malware"` (uproszczone) |
+| pozostałe 55 kolumn | cechy numeryczne — to jest wejście do modelu |
+
+**Dwa tryby etykietowania:**
+- `mode="binary"` → używa kolumny `Class`: 0 = Benign, 1 = Malware
+- `mode="multiclass"` → parsuje `Category`: 0 = Benign, 1 = Ransomware, 2 = Spyware, 3 = Trojan
 
 ---
 
@@ -325,7 +337,7 @@ ETAP 6: Porównanie i raport
 | Loss = NaN | Eksplodujące gradienty lub za duże LR | Sprawdź dane (NaN?), zmniejsz LR |
 | Accuracy = 50% (dla 2 klas) | Model losuje | Debug architecture, sprawdź dane |
 | t-SNE — wszystko zmieszane | Latent space nie separuje | Zwiększ beta w VAE, trenuj dłużej |
-| `FileNotFoundError` w loader.py | Brak plików CSV w `data/raw/` | Pobierz i wklej dataset |
+| `FileNotFoundError` w loader.py | Brak pliku `.parquet` w `data/raw/` | Pobierz z Kaggle (`dhoogla/cicmalmem2022`) i wklej `Obfuscated-MalMem2022.parquet` |
 
 ---
 
