@@ -12,12 +12,12 @@ https://www.kaggle.com/datasets/dhoogla/cicmalmem2022
 ```
 DL-Project/
 └── data/
-    └── raw/         ← TU wklejasz pliki .csv z datasetu
-        ├── Obfuscated-MalMem2022.csv   (przykładowa nazwa)
+    └── raw/         ← TU wklejasz plik
+        ├── Obfuscated-MalMem2022.parquet
         └── ...
 ```
 
-Kod sam je znajdzie — szuka wszystkiego co kończy się na `.csv` w folderze `data/raw/`.  
+Kod sam je znajdzie — szuka pliku w folderze `data/raw/`.  
 Folder `data/processed/` zostanie wypełniony automatycznie przez kod.
 
 **Ważne:** `data/raw/` jest w `.gitignore` — pliki NIE trafią do GitHuba (za duże).
