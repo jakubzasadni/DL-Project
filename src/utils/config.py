@@ -16,6 +16,7 @@ RESULTS_METRICS_DIR = os.path.join(ROOT_DIR, "results", "metrics")
 
 # --- Klasy ---
 CLASS_NAMES = ["Benign", "Spyware", "Ransomware", "Trojan"]
+CLASS_TO_INDEX = {name: idx for idx, name in enumerate(CLASS_NAMES)}
 NUM_CLASSES = len(CLASS_NAMES)
 NUM_FEATURES = 55  # Liczba cech w CIC-MalMem-2022
 

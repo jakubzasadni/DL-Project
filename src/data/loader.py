@@ -19,7 +19,7 @@ from sklearn.preprocessing import MinMaxScaler
 import torch
 from torch.utils.data import Dataset, DataLoader
 
-from src.utils.config import DATA_RAW_DIR, CLASS_NAMES, SEED
+from src.utils.config import DATA_RAW_DIR, CLASS_NAMES, CLASS_TO_INDEX, SEED
 
 
 class MalMemDataset(Dataset):
@@ -86,6 +86,68 @@ def _extract_type_from_category(category: str) -> str:
     return s.split("-")[0]
 
 
+def _get_feature_columns(df: pd.DataFrame) -> list[str]:
+    """Zwraca listę kolumn cech numerycznych bez metadanych i etykiet."""
+    skip_cols = {
+        "Category", "category", "Class", "class",
+        "Label", "label", "Filename", "filename",
+        "_type", "_label",
+    }
+    return [c for c in df.columns if c not in skip_cols]
+
+
+def _encode_labels(df: pd.DataFrame, mode: str) -> tuple[pd.DataFrame, list[str]]:
+    """Dodaje kolumnę _label zgodnie z wybranym trybem etykietowania."""
+    if mode == "binary":
+        col = next((c for c in df.columns if c.lower() == "class"), None)
+        if col is None:
+            raise ValueError("Brak kolumny 'Class' — wymagana do trybu binary.")
+        df["_label"] = df[col].map({"Benign": 0, "Malware": 1})
+        label_names = ["Benign", "Malware"]
+
+    elif mode == "multiclass":
+        col = next((c for c in df.columns if c.lower() == "category"), None)
+        if col is None:
+            raise ValueError("Brak kolumny 'Category' — wymagana do trybu multiclass.")
+        df["_type"] = df[col].apply(_extract_type_from_category)
+        df["_label"] = df["_type"].map(CLASS_TO_INDEX)
+        label_names = CLASS_NAMES
+
+    else:
+        raise ValueError(f"Nieznany tryb: '{mode}'. Użyj 'binary' lub 'multiclass'.")
+
+    return df, label_names
+
+
+def prepare_features_and_labels(
+    df: pd.DataFrame,
+    mode: str = "multiclass",
+) -> tuple[np.ndarray, np.ndarray, list[str]]:
+    """Przygotowuje cechy i etykiety bez skalowania.
+
+    Ten wariant jest bezpieczny dla modeli sklearn, gdzie scaler powinien być
+    uczony wyłącznie na zbiorze treningowym po wykonaniu splitu.
+    """
+    df = df.copy()
+    feature_cols = _get_feature_columns(df)
+    df, label_names = _encode_labels(df, mode)
+
+    before = len(df)
+    df = df.dropna(subset=["_label"])
+    dropped = before - len(df)
+    if dropped:
+        print(f"  [!] Usunięto {dropped} wierszy z nierozpoznaną klasą.")
+
+    X = df[feature_cols].values.astype(np.float32)
+    y = df["_label"].values.astype(np.int64)
+
+    dist = {label_names[i]: int((y == i).sum()) for i in range(len(label_names)) if (y == i).any()}
+    print(f"  {len(df)} próbek | {X.shape[1]} cech | tryb: {mode}")
+    print(f"  Rozkład klas: {dist}")
+
+    return X, y, feature_cols
+
+
 def preprocess(df: pd.DataFrame, mode: str = "multiclass") -> tuple[np.ndarray, np.ndarray]:
     """Preprocessing datasetu CIC-MalMem-2022.
 
@@ -98,53 +160,58 @@ def preprocess(df: pd.DataFrame, mode: str = "multiclass") -> tuple[np.ndarray, 
         X: np.ndarray (N, 55) — znormalizowane cechy [0, 1]
         y: np.ndarray (N,)    — etykiety numeryczne
     """
-    df = df.copy()
-
-    # Kolumny meta — wyrzucamy je z cech
-    skip_cols = {"Category", "category", "Class", "class",
-                 "Label", "label", "Filename", "filename"}
-    feature_cols = [c for c in df.columns if c not in skip_cols]
-
-    if mode == "binary":
-        # Kolumna 'Class': "Benign" / "Malware"
-        col = next((c for c in df.columns if c.lower() == "class"), None)
-        if col is None:
-            raise ValueError("Brak kolumny 'Class' — wymagana do trybu binary.")
-        df["_label"] = df[col].map({"Benign": 0, "Malware": 1})
-
-    elif mode == "multiclass":
-        # Kolumna 'Category': "Benign" lub "Ransomware-...-1.raw" itp.
-        col = next((c for c in df.columns if c.lower() == "category"), None)
-        if col is None:
-            raise ValueError("Brak kolumny 'Category' — wymagana do trybu multiclass.")
-        df["_type"] = df[col].apply(_extract_type_from_category)
-        df["_label"] = df["_type"].map(
-            {"Benign": 0, "Ransomware": 1, "Spyware": 2, "Trojan": 3}
-        )
-
-    else:
-        raise ValueError(f"Nieznany tryb: '{mode}'. Użyj 'binary' lub 'multiclass'.")
-
-    # Usuń wiersze z nierozpoznaną klasą
-    before = len(df)
-    df = df.dropna(subset=["_label"])
-    dropped = before - len(df)
-    if dropped:
-        print(f"  [!] Usunięto {dropped} wierszy z nierozpoznaną klasą.")
-
-    X = df[feature_cols].values.astype(np.float32)
-    y = df["_label"].values.astype(np.int64)
+    X, y, _ = prepare_features_and_labels(df, mode)
 
     # Normalizacja Min-Max → każda cecha w [0, 1]
     scaler = MinMaxScaler()
-    X = scaler.fit_transform(X)
-
-    label_names = ["Benign", "Malware"] if mode == "binary" else CLASS_NAMES
-    dist = {label_names[i]: int((y == i).sum()) for i in range(len(label_names)) if (y == i).any()}
-    print(f"  {len(df)} próbek | {X.shape[1]} cech | tryb: {mode}")
-    print(f"  Rozkład klas: {dist}")
+    X = scaler.fit_transform(X).astype(np.float32)
 
     return X, y
+
+
+def make_sklearn_splits(
+    X: np.ndarray,
+    y: np.ndarray,
+    test_size: float = 0.20,
+    val_size: float = 0.10,
+    scale: bool = True,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, MinMaxScaler | None]:
+    """Tworzy split train/val/test pod modele sklearn.
+
+    Skaler Min-Max jest uczony wyłącznie na zbiorze treningowym, aby uniknąć
+    leakage między zbiorem treningowym i walidacyjno-testowym.
+    """
+    if not 0 < test_size < 1:
+        raise ValueError("test_size musi być z przedziału (0, 1).")
+    if not 0 < val_size < 1:
+        raise ValueError("val_size musi być z przedziału (0, 1).")
+    if test_size + val_size >= 1:
+        raise ValueError("Suma test_size i val_size musi być mniejsza niż 1.")
+
+    X_trainval, X_test, y_trainval, y_test = train_test_split(
+        X, y, test_size=test_size, stratify=y, random_state=SEED
+    )
+    val_fraction = val_size / (1 - test_size)
+    X_train, X_val, y_train, y_val = train_test_split(
+        X_trainval,
+        y_trainval,
+        test_size=val_fraction,
+        stratify=y_trainval,
+        random_state=SEED,
+    )
+
+    scaler = None
+    if scale:
+        scaler = MinMaxScaler()
+        X_train = scaler.fit_transform(X_train).astype(np.float32)
+        X_val = scaler.transform(X_val).astype(np.float32)
+        X_test = scaler.transform(X_test).astype(np.float32)
+    else:
+        X_train = X_train.astype(np.float32)
+        X_val = X_val.astype(np.float32)
+        X_test = X_test.astype(np.float32)
+
+    return X_train, X_val, X_test, y_train, y_val, y_test, scaler
 
 
 def make_dataloaders(

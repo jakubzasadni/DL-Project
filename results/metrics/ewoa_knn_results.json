@@ -1,0 +1,32 @@
+{
+  "model": "EWOA + KNN (supervised)",
+  "selection_metric": "accuracy",
+  "n_whales": 18,
+  "n_iterations": 25,
+  "k_neighbors": 5,
+  "selected_feature_count": 13,
+  "selected_features": [
+    "pslist.nproc",
+    "dlllist.avg_dlls_per_proc",
+    "handles.nkey",
+    "handles.nsemaphore",
+    "handles.ntimer",
+    "ldrmodules.not_in_load",
+    "ldrmodules.not_in_mem",
+    "ldrmodules.not_in_load_avg",
+    "malfind.uniqueInjections",
+    "psxview.not_in_eprocess_pool_false_avg",
+    "svcscan.kernel_drivers",
+    "svcscan.process_services",
+    "svcscan.nactive"
+  ],
+  "best_validation_score": 86.3934,
+  "accuracy": 86.0059,
+  "precision_macro": 78.8041,
+  "recall_macro": 78.7971,
+  "f1_macro": 78.753,
+  "precision_weighted": 85.9683,
+  "recall_weighted": 86.0059,
+  "f1_weighted": 85.9554,
+  "auc_ovr_macro": 0.939054
+}
