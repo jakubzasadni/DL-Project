@@ -1,114 +1,110 @@
 """
-Obliczanie metryk ewaluacyjnych dla modeli detekcji malware.
+Obliczanie metryk ewaluacyjnych dla klasyfikatora KNN z wyselekcjonowanymi cechami.
+
+Pipeline: EWOA/WOA/PSO/GA → selekcja cech → KNN → metryki.
 """
+import os
+import json
 import numpy as np
 import pandas as pd
+from sklearn.neighbors import KNeighborsClassifier
 from sklearn.metrics import (
-    accuracy_score, f1_score, roc_auc_score,
-    precision_score, recall_score, confusion_matrix, classification_report
+    accuracy_score, f1_score, precision_score, recall_score,
+    confusion_matrix, classification_report
 )
-import torch
-from torch.utils.data import DataLoader
 
 from src.utils.config import CLASS_NAMES, RESULTS_METRICS_DIR
-import os
 
 
-def get_reconstruction_errors(model, loader: DataLoader, device: torch.device) -> tuple[np.ndarray, np.ndarray]:
-    """Oblicza błędy rekonstrukcji dla wszystkich próbek z DataLoadera.
-    
-    Returns:
-        errors: np.ndarray shape (N,) — MSE rekonstrukcji per próbka
-        labels: np.ndarray shape (N,) — prawdziwe etykiety
-    """
-    model.eval()
-    all_errors, all_labels = [], []
-    with torch.no_grad():
-        for x, y in loader:
-            x = x.to(device)
-            errors = model.reconstruction_error(x).cpu().numpy()
-            all_errors.append(errors)
-            all_labels.append(y.numpy())
-    return np.concatenate(all_errors), np.concatenate(all_labels)
+def evaluate_knn(
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    X_test: np.ndarray,
+    y_test: np.ndarray,
+    selected_features: list[int],
+    n_neighbors: int = 5,
+    algorithm_name: str = "EWOA",
+) -> dict:
+    """Ewaluacja KNN na wybranych cechach — zwraca pełny zestaw metryk.
 
-
-def find_threshold(errors_benign: np.ndarray, percentile: float = 95.0) -> float:
-    """Wyznacza próg detekcji anomalii na podstawie percentyla błędów benign.
-    
     Args:
-        errors_benign: Błędy rekonstrukcji próbek benign z zbioru walidacyjnego.
-        percentile: Percentyl (domyślnie 95. — 5% FPR na danych benign).
-    
+        X_train, y_train: dane treningowe (znormalizowane)
+        X_test, y_test:   dane testowe
+        selected_features: indeksy wybranych cech (wynik EWOA/WOA/...)
+        n_neighbors:      k w KNN
+        algorithm_name:   nazwa algorytmu (do zapisu)
+
     Returns:
-        threshold: Próg — próbki z error > threshold → malware
+        dict z metrykami
     """
-    return float(np.percentile(errors_benign, percentile))
+    X_tr = X_train[:, selected_features]
+    X_te = X_test[:, selected_features]
 
-
-def evaluate_anomaly_detection(
-    errors: np.ndarray,
-    labels: np.ndarray,
-    threshold: float,
-    experiment_name: str = "ae_anomaly",
-) -> dict:
-    """Ewaluacja modelu anomaly detection przy danym progu.
-    
-    Labels: 0=Benign, 1+=Malware (binaryzacja).
-    """
-    y_true_binary = (labels != 0).astype(int)
-    y_pred_binary = (errors > threshold).astype(int)
+    knn = KNeighborsClassifier(n_neighbors=n_neighbors, n_jobs=-1)
+    knn.fit(X_tr, y_train)
+    y_pred = knn.predict(X_te)
 
     metrics = {
-        "accuracy": accuracy_score(y_true_binary, y_pred_binary),
-        "f1_macro": f1_score(y_true_binary, y_pred_binary, average="macro"),
-        "precision": precision_score(y_true_binary, y_pred_binary),
-        "recall": recall_score(y_true_binary, y_pred_binary),
-        "auc_roc": roc_auc_score(y_true_binary, errors),
-        "threshold": threshold,
+        "algorithm": algorithm_name,
+        "n_features": len(selected_features),
+        "selected_features": selected_features,
+        "accuracy": float(accuracy_score(y_test, y_pred)),
+        "f1_macro": float(f1_score(y_test, y_pred, average="macro", zero_division=0)),
+        "precision_macro": float(precision_score(y_test, y_pred, average="macro", zero_division=0)),
+        "recall_macro": float(recall_score(y_test, y_pred, average="macro", zero_division=0)),
+        "confusion_matrix": confusion_matrix(y_test, y_pred).tolist(),
     }
 
-    print(f"\n=== {experiment_name} ===")
-    for k, v in metrics.items():
-        print(f"  {k:15s}: {v:.6f}")
+    # Wyświetl
+    print(f"\n{'='*55}")
+    print(f"  {algorithm_name} + KNN (k={n_neighbors})")
+    print(f"{'='*55}")
+    print(f"  Wybrane cechy:  {len(selected_features)} / 55")
+    print(f"  Accuracy:       {metrics['accuracy']:.5f}")
+    print(f"  F1-macro:       {metrics['f1_macro']:.5f}")
+    print(f"  Precision:      {metrics['precision_macro']:.5f}")
+    print(f"  Recall:         {metrics['recall_macro']:.5f}")
+    print(f"{'='*55}")
+    print()
+    print(classification_report(y_test, y_pred, target_names=CLASS_NAMES, zero_division=0))
 
-    # Zapis do CSV
+    # Zapis do JSON
     os.makedirs(RESULTS_METRICS_DIR, exist_ok=True)
-    pd.DataFrame([metrics]).to_csv(
-        os.path.join(RESULTS_METRICS_DIR, f"{experiment_name}_metrics.csv"), index=False
-    )
+    save_path = os.path.join(RESULTS_METRICS_DIR, f"{algorithm_name.lower()}_results.json")
+    with open(save_path, "w") as f:
+        json.dump(metrics, f, indent=2)
+    print(f"Zapisano: {save_path}")
+
     return metrics
 
 
-def evaluate_classifier(
-    model,
-    loader: DataLoader,
-    device: torch.device,
-    experiment_name: str = "ae_classifier",
-) -> dict:
-    """Ewaluacja klasyfikatora wieloklasowego."""
-    model.eval()
-    all_preds, all_labels = [], []
-    with torch.no_grad():
-        for x, y in loader:
-            x = x.to(device)
-            logits = model(x)
-            preds = logits.argmax(dim=1).cpu().numpy()
-            all_preds.append(preds)
-            all_labels.append(y.numpy())
+def compare_algorithms(results: list[dict]) -> pd.DataFrame:
+    """Tworzy tabelę porównawczą wielu algorytmów.
 
-    y_pred = np.concatenate(all_preds)
-    y_true = np.concatenate(all_labels)
+    Args:
+        results: lista dict-ów z evaluate_knn()
 
-    metrics = {
-        "accuracy": accuracy_score(y_true, y_pred),
-        "f1_macro": f1_score(y_true, y_pred, average="macro"),
-    }
+    Returns:
+        DataFrame z porównaniem
+    """
+    rows = []
+    for r in results:
+        rows.append({
+            "Algorytm": r["algorithm"],
+            "Cechy": r["n_features"],
+            "Accuracy": f"{r['accuracy']:.5f}",
+            "F1-macro": f"{r['f1_macro']:.5f}",
+            "Precision": f"{r['precision_macro']:.5f}",
+            "Recall": f"{r['recall_macro']:.5f}",
+        })
 
-    print(f"\n=== {experiment_name} ===")
-    print(classification_report(y_true, y_pred, target_names=CLASS_NAMES))
+    df = pd.DataFrame(rows)
+    print("\n=== PORÓWNANIE ALGORYTMÓW ===")
+    print(df.to_string(index=False))
 
-    os.makedirs(RESULTS_METRICS_DIR, exist_ok=True)
-    pd.DataFrame([metrics]).to_csv(
-        os.path.join(RESULTS_METRICS_DIR, f"{experiment_name}_metrics.csv"), index=False
-    )
-    return metrics
+    # Zapis
+    save_path = os.path.join(RESULTS_METRICS_DIR, "comparison.csv")
+    df.to_csv(save_path, index=False)
+    print(f"\nZapisano: {save_path}")
+
+    return df

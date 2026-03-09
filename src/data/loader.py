@@ -16,30 +16,8 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler
-import torch
-from torch.utils.data import Dataset, DataLoader
 
 from src.utils.config import DATA_RAW_DIR, CLASS_NAMES, SEED
-
-
-class MalMemDataset(Dataset):
-    """Dataset dla CIC-MalMem-2022. Obsługuje tryb anomaly detection (tylko benign)
-    oraz tryb klasyfikacji wieloklasowej."""
-
-    def __init__(self, features: np.ndarray, labels: np.ndarray):
-        """
-        Args:
-            features: Tablica cech (N, 55), znormalizowana Min-Max.
-            labels:   Tablica etykiet (N,).
-        """
-        self.features = torch.FloatTensor(features)
-        self.labels = torch.LongTensor(labels)
-
-    def __len__(self) -> int:
-        return len(self.features)
-
-    def __getitem__(self, idx: int):
-        return self.features[idx], self.labels[idx]
 
 
 def load_raw_data(data_dir: str = DATA_RAW_DIR) -> pd.DataFrame:
@@ -147,33 +125,20 @@ def preprocess(df: pd.DataFrame, mode: str = "multiclass") -> tuple[np.ndarray, 
     return X, y
 
 
-def make_dataloaders(
+def make_splits(
     X: np.ndarray,
     y: np.ndarray,
-    batch_size: int = 256,
-    anomaly_mode: bool = False,
-) -> tuple[DataLoader, DataLoader, DataLoader]:
-    """Tworzy DataLoadery: train, val, test (80/10/10 split, stratified).
-    
-    W trybie anomaly_mode train/val zawiera TYLKO próbki benign (label=0).
-    Test zawiera wszystkie klasy.
+    test_size: float = 0.20,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Podział danych na train/test (stratified).
+
+    Zgodne z artykułem: 80% train, 20% test.
+
+    Returns:
+        (X_train, X_test, y_train, y_test)
     """
-    X_trainval, X_test, y_trainval, y_test = train_test_split(
-        X, y, test_size=0.20, stratify=y, random_state=SEED
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=test_size, stratify=y, random_state=SEED
     )
-    X_train, X_val, y_train, y_val = train_test_split(
-        X_trainval, y_trainval, test_size=0.125, stratify=y_trainval, random_state=SEED
-    )
-
-    if anomaly_mode:
-        X_train = X_train[y_train == 0]
-        y_train = y_train[y_train == 0]
-        X_val   = X_val[y_val == 0]
-        y_val   = y_val[y_val == 0]
-        print(f"  Anomaly mode: train={len(X_train)} benign | val={len(X_val)} benign | test={len(X_test)} wszystkich")
-
-    train_loader = DataLoader(MalMemDataset(X_train, y_train), batch_size=batch_size, shuffle=True,  num_workers=0)
-    val_loader   = DataLoader(MalMemDataset(X_val,   y_val),   batch_size=batch_size, shuffle=False, num_workers=0)
-    test_loader  = DataLoader(MalMemDataset(X_test,  y_test),  batch_size=batch_size, shuffle=False, num_workers=0)
-
-    return train_loader, val_loader, test_loader
+    print(f"  Split: train={len(X_train)}, test={len(X_test)}")
+    return X_train, X_test, y_train, y_test

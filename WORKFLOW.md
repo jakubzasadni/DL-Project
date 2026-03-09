@@ -16,9 +16,8 @@ DL-Project/
         └── Obfuscated-MalMem2022.parquet
 ```
 
-Format to **Parquet** (nie CSV) — to skompresowany format kolumnowy, dużo szybszy niż CSV.  
-Kod sam go znajdzie — `load_raw_data()` rekurencyjnie szuka plików `.parquet` i `.csv` w folderze `data/raw/`.  
-Folder `data/processed/` zostanie wypełniony automatycznie przez kod.
+Format to **Parquet** — skompresowany format kolumnowy, dużo szybszy niż CSV.  
+Kod sam go znajdzie — `load_raw_data()` rekurencyjnie szuka plików `.parquet` i `.csv` w folderze `data/raw/`.
 
 **Ważne:** `data/raw/` jest w `.gitignore` — pliki NIE trafią do GitHuba (za duże).
 
@@ -32,95 +31,155 @@ Mamy memory dumpy (zrzuty pamięci RAM) z komputerów Windows. Część pochodzi
 ### Dane wejściowe
 Każdy memory dump to **55 liczb** (cech) — np. liczba uruchomionych wątków, rodzaj wywołań systemowych itp. To już wyekstrahowane przez narzędzie Volatility, nie musimy tego robić sami.
 
-### Nasz pomysł: Autoencoder jako detektor anomalii
+### Nasz pomysł: EWOA + KNN (reprodukcja artykułu)
 
-Wyobraź sobie, że uczysz model jak wygląda **zdrowy** komputer. Potem pokazujesz mu zarażony — model nie potrafi go dobrze "zrozumieć", robi duży błąd. Ten błąd = alarm.
+Artykuł bazowy używa **EWOA** (Enhanced Whale Optimization Algorithm) żeby wybrać **kilka najważniejszych cech** z 55, a potem klasyfikuje próbki algorytmem **KNN** (K-Nearest Neighbors).
 
 ```
-Próbka benign  → Autoencoder → Rekonstrukcja ≈ oryginał   (mały błąd → OK)
-Próbka malware → Autoencoder → Rekonstrukcja ≠ oryginał   (duży błąd → ALARM)
+55 cech  →  EWOA (selekcja cech)  →  ~4 cechy  →  KNN (k=5)  →  Benign/Malware/typ
+```
+
+**Dlaczego selekcja cech?**  
+- Mniej cech = szybsze obliczenia
+- Usuwamy szum (nieistotne cechy)
+- Artykuł osiąga **99.987% accuracy** przy zaledwie **~4 cechach** z 55!
+
+---
+
+## 3. Co to jest WOA (Whale Optimization Algorithm)?
+
+Algorytm optymalizacji inspirowany zachowaniem **wielorybów humbaka** podczas polowania. Wieloryby tworzą "sieć bąbelkową" (bubble-net) żeby otoczyć zdobycz.
+
+### Fazy algorytmu
+
+```
+1. Inicjalizacja: 20 wielorybów, każdy z losową pozycją (55-wymiarowy wektor)
+   → Pozycja = binarna tablica: 1 = cecha wybrana, 0 = pominięta
+
+2. Pętla przez 30 iteracji:
+   a) Oblicz fitness każdego wieloryba (= jak dobre są wybrane cechy)
+   b) Znajdź najlepszego wieloryba (najniższy fitness)
+   c) Dla każdego wieloryba:
+      → Losuj r ∈ [0,1]
+      → Jeśli r < 0.5: ruch w stronę zdobyczy (best whale)
+      → Jeśli r ≥ 0.5: ruch spiralny (bubble-net)
+      → Zmniejszaj parametr a (2→0) — mniejsze "skoki"
+
+3. Zwróć najlepszego wieloryba = najlepsza selekcja cech
+```
+
+### Fitness (jak oceniamy wieloryba)
+
+$$f(\text{whale}) = (1 - \text{accuracy}_{KNN}) + \alpha \cdot \frac{\text{wybrane cechy}}{55}$$
+
+- Niska accuracy → wysoki fitness (źle)
+- Dużo cech → wyższy fitness (kara za zbyt wiele cech)
+- `alpha = 0.01` — mała waga kary za cechy (accuracy ważniejsza)
+
+### Konwersja ciągła → binarna
+
+Wieloryby poruszają się w przestrzeni ciągłej (np. 0.73, -1.2, 0.01...).  
+Żeby uzyskać binarną selekcję (0/1), stosujemy **sigmoid transfer function**:
+
+$$S(x) = \frac{1}{1 + e^{-x}}$$
+
+Potem losujemy: `cecha_wybrana = random() < S(x_i)`.
+
+---
+
+## 4. Co to jest EWOA (Enhanced WOA)?
+
+EWOA = WOA + **3 ulepszenia** opisane w artykule:
+
+### Ulepszenie 1: OBL (Opposition-Based Learning)
+
+**Problem:** WOA losowo inicjalizuje populację — może zacząć daleko od optimum.  
+**Rozwiązanie:** Generujemy 2× populację (oryginalna + "lustrzane odbicie"), bierzemy N najlepszych.
+
+```
+wieloryb[i]  = [0.3, 0.8, 0.1, ...]   (oryginalny)
+opposite[i]  = [0.7, 0.2, 0.9, ...]   (1 - wieloryb[i])
+
+→ Wybieramy 20 najlepszych z 40 kandydatów
+```
+
+### Ulepszenie 2: Mutacja bitowa
+
+**Problem:** WOA może utknąć w minimum lokalnym.  
+**Rozwiązanie:** Po każdym ruchu losowo "przełączamy" niektóre bity (0→1 lub 1→0).
+
+- Faza eksploracji (a > 1): wysoka mutacja 10-50%
+- Faza eksploatacji (a ≤ 1): niska mutacja 1-9%
+
+### Ulepszenie 3: NSS (Neighborhood Search Strategy)
+
+**Problem:** Wieloryby mogą przegapić dobre rozwiązania "w sąsiedztwie".  
+**Rozwiązanie:** Dla każdego wieloryba sprawdzamy sąsiadów w topologii pierścienia i losowo kopiujemy ich cechy.
+
+```
+Sąsiedzi wieloryba i (ring topology):
+  ← backward: wieloryb (i-1)
+  → forward:  wieloryb (i+1)
+  
+Losowo kopiujemy 1–3 cechy od sąsiada
 ```
 
 ---
 
-## 3. Co to jest Autoencoder (AE)?
+## 5. Co to jest KNN (K-Nearest Neighbors)?
 
-```
-    Wejście (55 liczb)
-         │
-    ┌────▼────┐
-    │ ENKODER │  ← "Ściska" dane do małej reprezentacji
-    └────┬────┘
-         │
-    [8 liczb]   ← "Latent space" — esencja próbki
-         │
-    ┌────▼────┐
-    │ DEKODER │  ← "Rozpycha" spowrotem do 55 liczb
-    └────┬────┘
-         │
-    Wyjście (55 liczb) ← powinno być ≈ wejście
-```
+Najprostszy klasyfikator — nie ma treningu, nie ma parametrów do uczenia!
 
-**Dlaczego 55 → 8 → 55?**  
-Bo jeśli model potrafi skompresować dane do 8 liczb i z powrotem je odtworzyć — naprawdę rozumie strukturę danych. Ale nauczyliśmy go TYLKO na benign. Malware ma inną strukturę → duży błąd rekonstrukcji.
+**Jak działa:**
+1. Dostaję nową próbkę do sklasyfikowania
+2. Szukam **k=5** najbliższych sąsiadów w danych treningowych (wg odległości euklidesowej)
+3. Głosowanie większościowe: jaka klasa dominuje wśród 5 sąsiadów?
+4. Zwracam tę klasę
 
-**Błąd rekonstrukcji (MSE):**
-$$MSE = \frac{1}{55} \sum_{i=1}^{55} (x_i - \hat{x}_i)^2$$
-
-To po prostu średnia kwadratów różnic między wejściem a wyjściem.
+**Dlaczego k=5?** Artykuł używa k=5. Nieparzyste k unika remisów.
 
 ---
 
-## 4. Co to jest VAE (Variational Autoencoder)?
-
-Ulepszenie AE. Zamiast zapamiętywać jedną konkretną wartość (8 liczb), latent space staje się **rozkładem prawdopodobieństwa** (średnia + odchylenie standardowe).
-
-**Po co?**  
-- Przestrzeń latentna jest "ładniejsza" i bardziej regularna
-- Lepiej separuje klasy (benign/spyware/ransomware/trojan)
-- Można używać do generowania nowych próbek
-
-**Strata VAE = błąd rekonstrukcji + kara za "chaos" w latent space (KL divergence)**
-
-W praktyce: VAE trenuje się tak samo jak AE, ale zwraca lepszy latent space.
-
----
-
-## 5. Mapa projektu — każdy plik wyjaśniony
+## 6. Mapa projektu — każdy plik wyjaśniony
 
 ### `src/utils/config.py` — Centralne ustawienia
-**Co robi:** Zawiera wszystkie hiperparametry i ścieżki do folderów w jednym miejscu.  
-**Kiedy edytować:** Gdy chcesz zmienić rozmiar latent space, liczbę epok, learning rate itp.  
-**Kluczowe rzeczy:**
+**Co robi:** Zawiera wszystkie hiperparametry i ścieżki do folderów.  
+**Kiedy edytować:** Gdy chcesz zmienić liczbę wielorybów, iteracji, k w KNN itp.
+
 ```python
-NUM_FEATURES = 55        # liczba cech w datasecie — nie zmieniaj
-AEConfig.latent_dim = 8  # rozmiar "ściśniętej" reprezentacji — możesz eksperymentować
-AEConfig.epochs = 100    # ile razy model przejdzie przez wszystkie dane
-AEConfig.learning_rate   # jak szybko model się uczy (za duże = niestabilny, za małe = wolny)
+NUM_FEATURES = 55         # liczba cech w datasecie — nie zmieniaj
+SEED = 42                 # ziarno losowości — reprodukowalność
+
+WOAConfig:
+  n_whales = 20           # rozmiar populacji
+  max_iter = 30           # liczba iteracji
+  n_neighbors = 5         # k w KNN
+  alpha = 0.01            # waga kary za liczbę cech
+
+EWOAConfig (WOAConfig + ekstra):
+  use_nss = True          # Neighborhood Search Strategy
 ```
 
 ---
 
 ### `src/data/loader.py` — Ładowanie danych
-**Co robi:** Wczytuje plik Parquet (lub CSV), wyciąga etykiety z kolumn `Category` i `Class`, normalizuje dane, dzieli na train/val/test, pakuje do DataLoaderów.  
-**Kiedy używać:** Na początku każdego notebooka/skryptu.  
+**Co robi:** Wczytuje Parquet/CSV, wyciąga etykiety, normalizuje, dzieli na train/test.
+
 **Kluczowe pojęcia:**
 
 | Pojęcie | Co to znaczy |
 |---------|--------------|
-| **Normalizacja (Min-Max)** | Skaluje każdą cechę do przedziału [0, 1]. Bez tego cechy z dużymi wartościami dominują nad innymi. |
-| **Train/Val/Test split** | Train = uczenie (80%), Val = strojenie (10%), Test = finalna ocena (10%). **Never** ucz się na test! |
-| **DataLoader** | "Dozownik" danych — podaje modelowi paczki (batche) zamiast całego datasetu naraz. Oszczędza RAM. |
-| **anomaly_mode=True** | Gdy True: train i val zawierają TYLKO próbki benign. Test zawiera wszystkie klasy. |
-| **Batch size 256** | Model aktualizuje wagi co 256 próbek, nie po każdej. Szybciej i stabilniej. |
+| **Normalizacja (Min-Max)** | Skaluje każdą cechę do przedziału [0, 1]. Bez tego cechy z dużymi wartościami dominują. |
+| **Train/Test split (80/20)** | Train = trenowanie KNN i optymalizacja (80%). Test = finalna ocena (20%). |
+| **Stratified split** | Zachowuje proporcje klas w train i test. |
 
 ```python
 # Typowe użycie:
-from src.data.loader import load_raw_data, preprocess, make_dataloaders
+from src.data.loader import load_raw_data, preprocess, make_splits
 
-df = load_raw_data("data/raw")                 # wczytaj .parquet z data/raw/
+df = load_raw_data()                           # wczytaj .parquet z data/raw/
 X, y = preprocess(df, mode="multiclass")       # normalizacja, mapowanie etykiet
-train_loader, val_loader, test_loader = make_dataloaders(X, y, anomaly_mode=True)
+X_train, X_test, y_train, y_test = make_splits(X, y)  # 80/20 stratified
 ```
 
 **Struktura datasetu (kolumny w pliku):**
@@ -129,7 +188,7 @@ train_loader, val_loader, test_loader = make_dataloaders(X, y, anomaly_mode=True
 |---------|------------|
 | `Category` | `"Benign"` albo pełna nazwa jak `"Ransomware-Ako-abc123-1.raw"` |
 | `Class` | `"Benign"` lub `"Malware"` (uproszczone) |
-| pozostałe 55 kolumn | cechy numeryczne — to jest wejście do modelu |
+| pozostałe 55 kolumn | cechy numeryczne — to jest wejście do algorytmu |
 
 **Dwa tryby etykietowania:**
 - `mode="binary"` → używa kolumny `Class`: 0 = Benign, 1 = Malware
@@ -137,102 +196,52 @@ train_loader, val_loader, test_loader = make_dataloaders(X, y, anomaly_mode=True
 
 ---
 
-### `src/models/autoencoder.py` — Podstawowy Autoencoder
-**Co robi:** Definiuje architekturę sieci neuronowej AE.  
-**Kiedy używać:** Faza 1 projektu — anomaly detection.
-
-```
-Encoder: 55 → 128 → 64 → 32 → 8    (warstwy FC + BatchNorm + ReLU + Dropout)
-Decoder:  8 → 32 → 64 → 128 → 55   (odwrotnie)
-```
+### `src/algorithms/woa.py` — Bazowy WOA
+**Co robi:** Implementacja Whale Optimization Algorithm do binarnej selekcji cech.
 
 **Kluczowe metody:**
-- `forward(x)` → zwraca `(rekonstrukcja, latent_vector)` — główna metoda sieci
-- `reconstruction_error(x)` → zwraca MSE per próbka — używane do detekcji anomalii
+- `optimize(X_train, y_train)` → uruchamia optymalizację, zwraca dict z wynikami
+- `_fitness(binary_position, X, y)` → oblicza fitness wieloryba (niska = lepsza)
+- `_sigmoid(x)` → transfer function: ciągłe → prawdopodobieństwo
+- `_to_binary(position)` → konwertuje pozycję ciągłą na binarną
 
-**Co to jest BatchNorm?** Normalizuje wartości wewnątrz sieci — przyspiesza uczenie i stabilizuje.  
-**Co to jest Dropout?** Losowo "wyłącza" neurony podczas treningu — zapobiega overfittingowi (zapamiętywaniu zamiast uczenia się).  
-**Co to jest ReLU?** Funkcja aktywacji: `f(x) = max(0, x)` — wprowadza nieliniowość (bez niej sieć byłaby jak mnożenie macierzy).
-
----
-
-### `src/models/vae.py` — Variational Autoencoder
-**Co robi:** Ulepszona wersja AE z probabilistycznym latent space.  
-**Kiedy używać:** Faza 2 — gdy chcemy lepszą separację klas i wizualizację t-SNE.
-
-**Dodatkowe metody vs AE:**
-- `encode(x)` → zwraca `(mu, log_var)` — parametry rozkładu latentnego
-- `reparameterize(mu, log_var)` → losuje próbkę z rozkładu N(mu, sigma²)
-- `loss(x, x_hat, mu, log_var)` → strata ELBO = MSE + beta * KL
-
-**Dlaczego log_var zamiast var?**  
-Bo log sprawia, że wartości mogą być ujemne (wariancja musi być > 0, log_var może być dowolne) — numerycznie stabilniejsze.
-
----
-
-### `src/models/classifier.py` — AE + Klasyfikator
-**Co robi:** Bierze zamrożony enkoder już wytrenowanego AE i dokłada głowicę klasyfikacyjną do rozróżniania 4 klas.  
-**Kiedy używać:** Faza 3 — klasyfikacja wieloklasowa (nie tylko benign vs malware, ale który typ).
-
-```
-Wytrenowany Encoder (zamrożony) → 8 liczb → FC(64) → ReLU → FC(4) → Softmax
-                                                               ↑
-                                              [Benign, Spyware, Ransomware, Trojan]
-```
-
-**Dlaczego zamrożony?**  
-Enkoder już dobrze reprezentuje dane. Nie chcemy go psuć — uczymy tylko głowicę na labeled data.  
-Metoda `unfreeze_encoder()` pozwala potem fine-tunować całość end-to-end.
-
----
-
-### `src/training/trainer.py` — Pętla treningowa
-**Co robi:** Uruchamia trening — epoka po epoce, batch po batchu. Zapisuje najlepszy model.
-
-**Workflow treningu (1 epoka):**
-```
-for każdy batch w train_loader:
-    1. Przepuść batch przez model → oblicz rekonstrukcję
-    2. Oblicz loss (błąd rekonstrukcji)
-    3. loss.backward() → oblicz gradienty (jak zmienić wagi żeby błąd był mniejszy)
-    4. optimizer.step() → zaktualizuj wagi
-    
-Potem walidacja (bez gradient, tylko sprawdzamy)
-Jeśli val_loss najniższy → zapisz model do results/models/
-```
-
-**Kluczowe pojęcia:**
-
-| Pojęcie | Co to znaczy |
-|---------|--------------|
-| **Epoka** | Jedno pełne przejście modelu przez cały dataset treningowy |
-| **Gradient** | "Kierunek" w którym trzeba zmienić wagi żeby błąd malał |
-| **Backpropagation** | Algorytm liczenia gradientów — propaguje błąd od wyjścia do wejścia |
-| **Adam optimizer** | Adaptacyjny algorytm optymalizacji — sam dobiera kroki dla każdego parametru |
-| **Overfitting** | Model zapamiętał dane treningowe zamiast nauczyć się reguł — train_loss mały, val_loss duży |
-| **Checkpoint** | Zapis wag modelu — bierzemy ten z najniższym val_loss, nie ostatni |
-
----
-
-### `src/evaluation/metrics.py` — Metryki
-**Co robi:** Oblicza jak dobry jest model. Obsługuje dwa tryby.
-
-**Tryb 1: Anomaly Detection**
+**Zwraca dict:**
 ```python
-errors, labels = get_reconstruction_errors(model, test_loader, device)
-# errors[i] = MSE rekonstrukcji dla próbki i
-# labels[i] = 0 (benign) lub 1/2/3 (malware)
-
-threshold = find_threshold(errors[labels == 0], percentile=95)
-# Próg = 95. percentyl błędów benign z VAL setu
-# Czyli: 95% próbek benign ma błąd PONIŻEJ progu
-
-metrics = evaluate_anomaly_detection(errors, labels, threshold)
+{
+    "selected_features": [2, 5, 10],    # indeksy wybranych cech
+    "binary_mask": [0, 0, 1, 0, 0, 1, ...],  # 55-elementowa maska
+    "best_fitness": 0.00123,
+    "convergence": [0.5, 0.3, 0.1, ...],  # fitness per iteracja
+    "n_selected": 3
+}
 ```
 
-**Tryb 2: Klasyfikacja wieloklasowa**
+---
+
+### `src/algorithms/ewoa.py` — Enhanced WOA (główny algorytm)
+**Co robi:** WOA + 3 ulepszenia (OBL, mutacja, NSS). To jest **algorytm z artykułu**.
+
+**Dodatkowe metody vs WOA:**
+- `_init_with_obl(X, y)` → inicjalizacja z Opposition-Based Learning
+- `_mutation(binary_pos, a)` → mutacja bitowa zależna od fazy (eksploracja/eksploatacja)
+- `_nss(binary_positions, fitness_values, idx)` → Neighborhood Search Strategy
+
+---
+
+### `src/evaluation/metrics.py` — Ewaluacja KNN
+**Co robi:** Trenuje KNN na wybranych cechach, oblicza metryki, zapisuje wyniki.
+
 ```python
-metrics = evaluate_classifier(classifier_model, test_loader, device)
+from src.evaluation.metrics import evaluate_knn, compare_algorithms
+
+# Ewaluacja jednego algorytmu
+result = evaluate_knn(X_train, y_train, X_test, y_test,
+                      selected_features=[2, 5, 10],
+                      n_neighbors=5, algorithm_name="EWOA")
+# result = {"algorithm": "EWOA", "accuracy": 0.999, "f1_macro": 0.998, ...}
+
+# Porównanie wielu algorytmów → tabela
+df = compare_algorithms([ewoa_result, woa_result, baseline_result])
 ```
 
 **Kluczowe metryki:**
@@ -240,13 +249,10 @@ metrics = evaluate_classifier(classifier_model, test_loader, device)
 | Metryka | Co mierzy | Idealna wartość |
 |---------|-----------|-----------------|
 | **Accuracy** | % poprawnych predykcji | 1.0 (100%) |
-| **F1-score (macro)** | Balans między precision i recall, uśredniony po klasach | 1.0 |
-| **AUC-ROC** | Zdolność separacji klas przy różnych progach | 1.0 |
-| **Precision** | Ze wszystkich alarmów, ile było prawdziwym malware | 1.0 |
-| **Recall** | Ze wszystkich malware, ile złapaliśmy | 1.0 |
-
-**Dlaczego nie tylko Accuracy?**  
-Bo dataset może być niezbalansowany. Jeśli 90% próbek to benign, model mówiący zawsze "benign" ma 90% accuracy — ale jest bezużyteczny jako detektor.
+| **F1-score (macro)** | Balans precision/recall, uśredniony po klasach | 1.0 |
+| **Precision** | Ze alarmów, ile było prawdziwym malware | 1.0 |
+| **Recall** | Ze malware, ile złapaliśmy | 1.0 |
+| **N features** | Ile cech wybrał algorytm | Im mniej, tym lepiej (artykuł: ~4) |
 
 ---
 
@@ -255,107 +261,98 @@ Bo dataset może być niezbalansowany. Jeśli 90% próbek to benign, model mówi
 
 | Funkcja | Co rysuje | Kiedy używać |
 |---------|-----------|--------------|
-| `plot_training_history` | Krzywe train/val loss po epokach | Po każdym treningu — sprawdź czy nie ma overfittingu |
-| `plot_reconstruction_error_distribution` | Histogram błędów benign vs malware | Weryfikacja czy AE separuje klasy |
-| `plot_tsne_latent_space` | 2D wizualizacja przestrzeni latentnej | Zrozumienie co model się nauczył |
-| `plot_confusion_matrix` | Macierz: przewidywane vs rzeczywiste klasy | Dla klasyfikatora wieloklasowego |
-
-**Co to jest t-SNE?**  
-Algorytm redukcji wymiarowości — bierze 8-wymiarowy latent space i "rzutuje" go na 2D tak żeby zachować podobieństwa. Używamy go żeby zobaczyć czy model dobrze oddziela klasy.
+| `plot_convergence` | Krzywe fitness vs iteracja (EWOA vs WOA) | Po optymalizacji — czy algorytm się zbiegł? |
+| `plot_feature_selection` | Heatmapa wybranych cech per algorytm | Porównanie: jakie cechy wybrał EWOA vs WOA |
+| `plot_accuracy_comparison` | Słupki accuracy + porównanie z artykułem | Grafik do raportu |
+| `plot_confusion_matrix` | Macierz: prawdziwe vs przewidywane klasy | Szczegółowa analiza błędów |
+| `plot_n_features_comparison` | Ile cech wybrał każdy algorytm | Efektywność selekcji |
 
 ---
 
 ### `experiments/configs/*.yaml` — Konfiguracja eksperymentów
-**Co robi:** Przechowuje hiperparametry w czytelnym formacie. Zamiast edytować kod — edytujemy YAML.
+**Co robi:** Przechowuje hiperparametry w czytelnym formacie.
 
 ```yaml
-# experiments/configs/ae_anomaly.yaml
-model:
-  latent_dim: 8        # ← zmień na 4, 16, 32 żeby zobaczyć co się stanie
-training:
-  epochs: 100          # ← zmień żeby trenować dłużej/krócej
-  learning_rate: 0.001
+# experiments/configs/ewoa_config.yaml
+algorithm: EWOA
+ewoa:
+  n_whales: 20       # ← zmień na 30 żeby zobaczyć co się stanie
+  max_iter: 30       # ← zmień żeby optymalizować dłużej
+  n_neighbors: 5     # ← k w KNN
+  alpha: 0.01        # ← waga kary za liczbę cech
 ```
 
 ---
 
-## 6. Workflow projekt — krok po kroku
+## 7. Workflow projekt — krok po kroku
 
 ```
 ETAP 1: Przygotowanie danych
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 1. Pobierz dataset → wklej do data/raw/
 2. Odpal notebook 01_eda.ipynb
-   → Sprawdź rozkład klas, czy są NaN, czy cechy są w sensownym zakresie
-   → Wizualizacja korelacji cech
+   → Sprawdź rozkład klas, czy są NaN, korelacje cech
+   → 58 058 próbek, 55 cech, 4 klasy
 
 ETAP 2: Baseline (punkt odniesienia)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-3. Odpal notebook 02_baseline.ipynb
-   → Prosta sieć FC (bez AE) trenowana na labeled data
-   → Cel: zobaczyć "dolną poprzeczkę" — co osiągamy bez autoencoder
-   → Porównaj z wynikami z artykułu (EWOA+KNN = 99.987%)
+3. Odpal notebook 02_knn_baseline.ipynb
+   → KNN (k=5) na WSZYSTKICH 55 cechach
+   → Cel: zobaczyć accuracy bez selekcji cech
+   → Sprawdź wpływ k na accuracy
 
-ETAP 3: AE Anomaly Detection (główny pomysł)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-4. Odpal notebook 03_autoencoder.ipynb
-   → anomaly_mode=True: trenuj AE tylko na benign
-   → Sprawdź krzywe loss (czy zbiegają, czy nie ma overfittingu)
-   → Wyznacz próg na VAL secie (percentyl 95)
-   → Oceń na TEST secie → wypisz metryki
-   → Wizualizacja: rozkład błędów rekonstrukcji
+ETAP 3: EWOA + KNN (główny eksperyment)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+4. Odpal notebook 03_ewoa_optimization.ipynb
+   → Uruchom EWOA (20 wielorybów, 30 iteracji)
+   → Uruchom WOA (bazowy, do porównania)
+   → Porównaj: ile cech wybrał, jaki accuracy
+   → Wizualizacje: krzywe zbieżności, heatmapa cech, confusion matrix
 
-ETAP 4: VAE
-━━━━━━━━━━━
-5. Odpal notebook 04_vae.ipynb
-   → Analogicznie do AE, ale model = VAE
-   → Dodatkowo: wizualizacja t-SNE latent space
-   → Czy VAE separuje klasy lepiej niż AE?
+ETAP 4: Porównanie z artykułem
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+5. Tabela: EWOA vs WOA vs KNN-all-55 vs artykuł
+   → Accuracy, F1, liczba cech, czas
+   → Czy osiągamy ~99.987%? Ile cech wybraliśmy?
 
-ETAP 5: Klasyfikator wieloklasowy
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-6. Załaduj wytrenowany AE/VAE
-   → Stwórz AEClassifier(ae)
-   → Trenuj na LABELED data (wszystkie 4 klasy)
-   → Czy reprezentacja latentna AE jest dobra dla klasyfikacji?
-
-ETAP 6: Porównanie i raport
+ETAP 5: Raport i prezentacja
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
-7. Notebook 05_comparison.ipynb
-   → Tabela: AE vs VAE vs Classifier vs Baseline vs EWOA+KNN (z artykułu)
-   → Wnioski: kiedy AE jest lepszy, kiedy gorszy?
+6. Podsumowanie wyników
+   → Wykresy do raportu
+   → Wnioski: czy reprodukcja się udała?
 ```
 
 ---
 
-## 7. Typowe błędy i co oznaczają
+## 8. Typowe błędy i co oznaczają
 
 | Błąd / Objaw | Co to znaczy | Co zrobić |
 |---|---|---|
-| `train_loss` spada, `val_loss` rośnie | Overfitting — model zapamiętuje | Zwiększ Dropout, zmniejsz model, więcej danych |
-| Loss nie spada w ogóle | Za duże LR lub zła inicjalizacja | Zmniejsz learning_rate 10x |
-| Loss = NaN | Eksplodujące gradienty lub za duże LR | Sprawdź dane (NaN?), zmniejsz LR |
-| Accuracy = 50% (dla 2 klas) | Model losuje | Debug architecture, sprawdź dane |
-| t-SNE — wszystko zmieszane | Latent space nie separuje | Zwiększ beta w VAE, trenuj dłużej |
-| `FileNotFoundError` w loader.py | Brak pliku `.parquet` w `data/raw/` | Pobierz z Kaggle (`dhoogla/cicmalmem2022`) i wklej `Obfuscated-MalMem2022.parquet` |
+| Fitness nie spada | EWOA utknął w minimum lokalnym | Zwiększ `n_whales` lub `max_iter` |
+| Accuracy = 100% na train, niska na test | Overfitting / za mało cech wybranych | Zwiększ `alpha` (kara za mało cech) |
+| EWOA bardzo wolny | Za dużo ewaluacji fitness | Zmniejsz `fitness_sample_size` w `_prepare_fitness_data()` |
+| Wybrał 0 cech | Algorytm się nie zainicjalizował | Sprawdź seed, sprawdź dane |
+| `FileNotFoundError` w loader.py | Brak pliku `.parquet` w `data/raw/` | Pobierz z Kaggle (`dhoogla/cicmalmem2022`) |
+| EWOA wybrał 40+ cech | Za niskie `alpha` lub za mało iteracji | Zwiększ `alpha` do 0.05, zwiększ `max_iter` |
 
 ---
 
-## 8. Słowniczek
+## 9. Słowniczek
 
 | Termin | Po ludzku |
 |--------|-----------|
-| **Sieć neuronowa** | Funkcja matematyczna z milionami parametrów (wag), które uczymy |
-| **Wagi (weights)** | Liczby wewnątrz sieci — to właśnie "uczymy" przez trening |
-| **Epoka** | Jedno pełne przejście przez dataset treningowy |
-| **Batch** | Paczka danych — model widzi 256 próbek naraz, nie jedną |
-| **Loss (strata)** | Liczba mówiąca jak bardzo model się myli — chcemy minimalizować |
-| **Gradient descent** | Algorytm minimalizowania loss — "jedź w dół zbocza" |
-| **Latent space** | Skompresowana reprezentacja danych — "co model myśli o próbce" |
-| **Overfitting** | Model zapamiętał dane zamiast nauczyć się reguł |
-| **Underfitting** | Model za prosty, nie potrafi uchwycić wzorców |
-| **Hiperparametr** | Ustawienie modelu które ty wybierasz (LR, liczba epok) — nie uczony |
-| **Parametr** | Wagi sieci — uczone automatycznie przez backprop |
-| **Inference** | Użycie wytrenowanego modelu na nowych danych (bez uczenia) |
-| **Checkpoint** | Zapisany stan wag modelu w danym momencie treningu |
-| **Fine-tuning** | Dalsze uczenie już wytrenowanego modelu na nowym zadaniu |
+| **EWOA** | Enhanced Whale Optimization Algorithm — metaheurystyka do selekcji cech |
+| **WOA** | Bazowy Whale Optimization Algorithm (bez ulepszeń) |
+| **KNN** | K-Nearest Neighbors — klasyfikator szukający k najbliższych sąsiadów |
+| **Feature selection** | Wybór podzbioru cech (z 55 → ~4) żeby poprawić/przyspieszyć klasyfikację |
+| **Fitness** | Ocena jakości rozwiązania — niższa = lepsza |
+| **Metaheurystyka** | Algorytm optymalizacji inspirowany naturą (wieloryby, rój, ewolucja) |
+| **OBL** | Opposition-Based Learning — sprytna inicjalizacja populacji |
+| **NSS** | Neighborhood Search Strategy — eksploracja sąsiedztwa rozwiązań |
+| **Mutacja** | Losowa zmiana bitów w rozwiązaniu — unikanie minimów lokalnych |
+| **Sigmoid** | Funkcja S-kształtna: dowolna liczba → (0, 1). Używana do konwersji ciągłe→binarne |
+| **Min-Max normalizacja** | Skalowanie cech do [0, 1] |
+| **Stratified split** | Podział danych zachowujący proporcje klas |
+| **Confusion matrix** | Tabela: prawdziwe vs przewidywane klasy — widać dokładnie gdzie model się myli |
+| **F1-score** | Średnia harmoniczna precision i recall — dobra miara dla niezbalansowanych danych |
+| **Accuracy** | % poprawnych predykcji — prosta, ale może być myląca przy niezbalansowanych danych |

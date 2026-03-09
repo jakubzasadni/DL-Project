@@ -1,0 +1,24 @@
+# WOA — bazowy Whale Optimization Algorithm (do porównań)
+
+algorithm: WOA
+dataset: CIC-MalMem-2022
+mode: multiclass
+
+woa:
+  n_whales: 20
+  max_iter: 30
+  n_neighbors: 5
+  alpha: 0.01
+  b: 1.0
+
+split:
+  test_size: 0.20
+  seed: 42
+
+evaluation:
+  metrics:
+    - accuracy
+    - f1_macro
+    - precision
+    - recall
+    - classification_report

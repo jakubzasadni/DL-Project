@@ -1,0 +1,26 @@
+# EWOA — Enhanced Whale Optimization Algorithm
+# Parametry zgodne z artykułem (IJIES 2024)
+
+algorithm: EWOA
+dataset: CIC-MalMem-2022
+mode: multiclass
+
+ewoa:
+  n_whales: 20
+  max_iter: 30
+  n_neighbors: 5        # k w KNN
+  alpha: 0.01            # waga kary za liczbę cech w fitness
+  b: 1.0                 # stała spirali
+  use_nss: true          # Neighborhood Search Strategy
+
+split:
+  test_size: 0.20
+  seed: 42
+
+evaluation:
+  metrics:
+    - accuracy
+    - f1_macro
+    - precision
+    - recall
+    - classification_report

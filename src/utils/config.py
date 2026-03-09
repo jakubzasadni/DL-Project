@@ -1,10 +1,12 @@
 """
 Konfiguracja eksperymentów dla DL-Project.
-Wszystkie hiperparametry i ścieżki definiowane tutaj.
+
+Projekt: Reprodukcja artykułu EWOA (IJIES 2024).
+Pipeline: EWOA selekcja cech → KNN klasyfikacja → detekcja malware.
+Dataset:  CIC-MalMem-2022 (55 cech, 4 klasy / 2 klasy binarne).
 """
 import os
 from dataclasses import dataclass, field
-from typing import Optional
 
 # --- Ścieżki ---
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -23,41 +25,32 @@ NUM_FEATURES = 55  # Liczba cech w CIC-MalMem-2022
 SEED = 42
 
 
+# --- Algorytmy optymalizacji (z artykułu) ---
 @dataclass
-class AEConfig:
-    """Konfiguracja podstawowego Autoencodera."""
-    input_dim: int = NUM_FEATURES
-    hidden_dims: list = field(default_factory=lambda: [128, 64, 32])
-    latent_dim: int = 8
-    dropout: float = 0.2
-    learning_rate: float = 1e-3
-    batch_size: int = 256
-    epochs: int = 100
-    weight_decay: float = 1e-5
+class WOAConfig:
+    """Konfiguracja bazowego WOA (do porównań)."""
+    n_whales: int = 20
+    max_iter: int = 30
+    n_neighbors: int = 5       # k w KNN
+    alpha: float = 0.01        # waga kary za liczbę cech
+    b: float = 1.0             # stała spirali
 
 
 @dataclass
-class VAEConfig:
-    """Konfiguracja Variational Autoencodera."""
-    input_dim: int = NUM_FEATURES
-    hidden_dims: list = field(default_factory=lambda: [128, 64])
-    latent_dim: int = 8
-    beta: float = 1.0  # Waga KL-divergence
-    dropout: float = 0.2
-    learning_rate: float = 1e-3
-    batch_size: int = 256
-    epochs: int = 100
-    weight_decay: float = 1e-5
+class EWOAConfig:
+    """Konfiguracja Enhanced WOA (główny algorytm)."""
+    n_whales: int = 20
+    max_iter: int = 30
+    n_neighbors: int = 5
+    alpha: float = 0.01
+    b: float = 1.0
+    use_nss: bool = True       # Neighborhood Search Strategy
 
 
-@dataclass
-class ClassifierConfig:
-    """Konfiguracja AE + głowica klasyfikacyjna."""
-    latent_dim: int = 8
-    num_classes: int = NUM_CLASSES
-    hidden_dim: int = 64
-    dropout: float = 0.3
-    learning_rate: float = 1e-3
-    batch_size: int = 256
-    epochs: int = 50
-    freeze_encoder: bool = True
+# --- Algorytmy porównawcze (metaheurystyki) ---
+COMPARISON_ALGORITHMS = [
+    "EWOA",   # Enhanced Whale Optimization (nasz główny)
+    "WOA",    # bazowy Whale Optimization
+    "PSO",    # Particle Swarm Optimization
+    "GA",     # Genetic Algorithm
+]
