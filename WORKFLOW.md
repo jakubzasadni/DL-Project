@@ -5,8 +5,7 @@
 ## 1. Gdzie wkleić dataset
 
 **Pobierz dataset stąd:**  
-https://www.unb.ca/cic/datasets/malmem-2022.html  
-(przycisk "Download", wymagana rejestracja emailem)
+https://www.kaggle.com/datasets/dhoogla/cicmalmem2022
 
 **Po pobraniu wklej pliki CSV tutaj:**
 
