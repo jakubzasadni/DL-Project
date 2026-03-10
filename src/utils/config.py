@@ -16,8 +16,8 @@ RESULTS_MODELS_DIR = os.path.join(ROOT_DIR, "results", "models")
 RESULTS_PLOTS_DIR = os.path.join(ROOT_DIR, "results", "plots")
 RESULTS_METRICS_DIR = os.path.join(ROOT_DIR, "results", "metrics")
 
-# --- Klasy ---
-CLASS_NAMES = ["Benign", "Spyware", "Ransomware", "Trojan"]
+# --- Klasy (tryb binarny: Benign vs Malware — zgodne z artykułem) ---
+CLASS_NAMES = ["Benign", "Malware"]
 NUM_CLASSES = len(CLASS_NAMES)
 NUM_FEATURES = 55  # Liczba cech w CIC-MalMem-2022
 
